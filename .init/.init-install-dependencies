@@ -1,0 +1,4 @@
+{
+    "command": "npm install",
+    "working_directory": "/home/kavia/workspace/code-generation/stock-insights-dashboard-239614-239623/stock_insight_analyzer_frontend"
+}
