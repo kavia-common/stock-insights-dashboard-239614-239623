@@ -109,29 +109,51 @@ test("B. Ranking Integrity Test: results top10 are sorted descending by predicte
 test("B2. Engine computes predicted_1day_growth_pct from model_factors_43 when direct field missing", () => {
   const spec = getModel43Spec();
 
-  const mkFactors = (v01) => {
+  /**
+   * Build a universe where we can *guarantee* which tickers are the engine's top10:
+   * - 10 chosen tickers are forced to +3.0% predicted growth (the maximum possible from the factor model),
+   * - every other ticker is forced to -3.0% (minimum),
+   * so the engine's top10 are deterministic and independent of makeMockUniverse ordering.
+   */
+  const mkAllFactors = (v) => {
     const inputs = {};
-    for (const f of spec.factors) inputs[f.id] = 0.5;
-    inputs.f01 = v01; // differentiate 2 tickers
+    for (const f of spec.factors) inputs[f.id] = v;
     return inputs;
   };
 
-  const universe = makeMockUniverse(250).map((u, idx) => {
-    if (idx === 0) {
-      return {
+  const TOP10 = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "AMD", "QCOM"];
+  const MUST_COMPUTE = new Set(["AAPL", "MSFT"]); // force compute-path for two guaranteed-top10 tickers
+
+  const universe = makeMockUniverse(250).map((u) => {
+    const t = String(u.ticker || "").toUpperCase();
+
+    if (TOP10.includes(t)) {
+      // Ensure these are the top 10, and for two of them ensure compute path is used.
+      const base = {
         ...u,
-        predicted_1day_growth_pct: undefined, // force compute path
-        model_factors_43: mkFactors(1.0),
+        sector: u.sector || "Tech",
+      };
+
+      if (MUST_COMPUTE.has(t)) {
+        return {
+          ...base,
+          predicted_1day_growth_pct: undefined,
+          model_factors_43: mkAllFactors(1.0), // => weighted score 1.0 => +3.0%
+        };
+      }
+
+      // Direct field also fine; we just need deterministic membership in top10.
+      return {
+        ...base,
+        predicted_1day_growth_pct: 3.0,
       };
     }
-    if (idx === 1) {
-      return {
-        ...u,
-        predicted_1day_growth_pct: undefined, // force compute path
-        model_factors_43: mkFactors(0.0),
-      };
-    }
-    return u;
+
+    // Force everyone else to be worse than any top10 candidate.
+    return {
+      ...u,
+      predicted_1day_growth_pct: -3.0,
+    };
   });
 
   const tickers = tickersRequiredByEngine(universe);
@@ -143,20 +165,30 @@ test("B2. Engine computes predicted_1day_growth_pct from model_factors_43 when d
     eodPrices: pricesForTickers(tickers),
   });
 
-  // Ensure computed values exist and are numeric for the first two tickers.
-  const r0 = output.results.find((r) => r.ticker === universe[0].ticker.toUpperCase());
-  const r1 = output.results.find((r) => r.ticker === universe[1].ticker.toUpperCase());
-  expect(typeof r0.predicted_1day_growth_pct).toBe("number");
-  expect(typeof r1.predicted_1day_growth_pct).toBe("number");
+  const rAapl = output.results.find((r) => r.ticker === "AAPL");
+  const rMsft = output.results.find((r) => r.ticker === "MSFT");
+
+  expect(typeof rAapl?.predicted_1day_growth_pct).toBe("number");
+  expect(typeof rMsft?.predicted_1day_growth_pct).toBe("number");
 });
 
 test("C. Trade Header Test: TRADE when avg>=0.50 and dispersion>=0.60, else NO TRADE; sector_warning when >=7 same sector", () => {
-  // Build top10 with avg=1.0 and dispersion=0.9 => TRADE
-  const universe = makeMockUniverse(250).map((u, i) => {
-    if (i < 10) {
-      return { ...u, predicted_1day_growth_pct: 1.0 - i * 0.1, sector: "Tech" }; // 10 in same sector => warning
+  const TOP10 = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "AMD", "QCOM"];
+
+  // Make the engine's ranked top10 deterministic and satisfy TRADE rules:
+  // avg = 0.55, dispersion = 0.9  => TRADE; also put all 10 into same sector => sector_warning true
+  const desiredTop10Growth = [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1];
+
+  const universe = makeMockUniverse(250).map((u) => {
+    const t = String(u.ticker || "").toUpperCase();
+    const idx = TOP10.indexOf(t);
+
+    if (idx >= 0) {
+      return { ...u, predicted_1day_growth_pct: desiredTop10Growth[idx], sector: "Tech" };
     }
-    return u;
+
+    // Ensure no other ticker can displace our intended top10.
+    return { ...u, predicted_1day_growth_pct: -3.0 };
   });
 
   const tickers = tickersRequiredByEngine(universe);
@@ -171,8 +203,13 @@ test("C. Trade Header Test: TRADE when avg>=0.50 and dispersion>=0.60, else NO T
   expect(output.trade_header).toBe("TRADE");
   expect(output.sector_warning).toBe(true);
 
-  // Force NO TRADE by failing dispersion (all equal)
-  const universe2 = makeMockUniverse(250).map((u, i) => (i < 10 ? { ...u, predicted_1day_growth_pct: 0.6 } : u));
+  // Force NO TRADE by failing dispersion (all equal across deterministic top10)
+  const universe2 = makeMockUniverse(250).map((u) => {
+    const t = String(u.ticker || "").toUpperCase();
+    if (TOP10.includes(t)) return { ...u, predicted_1day_growth_pct: 0.6, sector: "Tech" };
+    return { ...u, predicted_1day_growth_pct: -3.0 };
+  });
+
   const tickers2 = tickersRequiredByEngine(universe2);
 
   const { output: out2 } = runStockCheck({
