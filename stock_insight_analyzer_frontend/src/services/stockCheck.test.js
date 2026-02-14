@@ -1,4 +1,5 @@
 import { CANONICAL_COLUMNS, makeMockUniverse, runStockCheck } from "./stockCheck";
+import { getModel43Spec, computePredicted1DayGrowthPctFromFactors } from "./stockCheckModel43";
 
 function pricesForTickers(tickers) {
   const out = {};
@@ -32,6 +33,31 @@ test("A. Column Order Test: canonical column order is locked", () => {
   ]);
 });
 
+test("A2. 43-Factor spec is locked: 43 factors and total weight 100%", () => {
+  const spec = getModel43Spec();
+  expect(spec.factors).toHaveLength(43);
+
+  // Sum should be exactly 100.0 as per user_input_ref
+  const total = spec.factors.reduce((s, f) => s + f.weightPct, 0);
+  expect(total).toBeCloseTo(100.0, 8);
+
+  // Spot-check a few weights (authoritative)
+  const byId = new Map(spec.factors.map((f) => [f.id, f]));
+  expect(byId.get("f04").weightPct).toBeCloseTo(2.5, 8); // 50-Day Trend Position
+  expect(byId.get("f08").weightPct).toBeCloseTo(3.0, 8); // Breakout Velocity
+  expect(byId.get("f40").weightPct).toBeCloseTo(1.5, 8); // Dollar Index Trend
+  expect(byId.get("f43").weightPct).toBeCloseTo(0.5, 8); // Risk-On/Risk-Off Composite
+});
+
+test("A3. Factor compute is forward-honest: missing any factor throws", () => {
+  const spec = getModel43Spec();
+  const inputs = {};
+  for (const f of spec.factors) inputs[f.id] = 0.5;
+  delete inputs["f01"];
+
+  expect(() => computePredicted1DayGrowthPctFromFactors(inputs)).toThrow(/Missing factor input: f01/);
+});
+
 test("B. Ranking Integrity Test: results top10 are sorted descending by predicted growth (rank engine)", () => {
   const universe = makeMockUniverse(250);
   const sorted = [...universe].sort((a, b) => b.predicted_1day_growth_pct - a.predicted_1day_growth_pct);
@@ -47,6 +73,60 @@ test("B. Ranking Integrity Test: results top10 are sorted descending by predicte
 
   const top10Growth = output.results.slice(0, 10).map((r) => r.predicted_1day_growth_pct);
   expect(isDesc(top10Growth)).toBe(true);
+});
+
+test("B2. Engine computes predicted_1day_growth_pct from model_factors_43 when direct field missing", () => {
+  const spec = getModel43Spec();
+
+  const mkFactors = (v01) => {
+    const inputs = {};
+    for (const f of spec.factors) inputs[f.id] = 0.5;
+    inputs.f01 = v01; // differentiate 2 tickers
+    return inputs;
+  };
+
+  const universe = makeMockUniverse(250).map((u, idx) => {
+    if (idx === 0) {
+      const { predicted_1day_growth_pct } = computePredicted1DayGrowthPctFromFactors(mkFactors(1.0));
+      return {
+        ...u,
+        predicted_1day_growth_pct: undefined, // force compute path
+        model_factors_43: mkFactors(1.0),
+        // keep other required fields
+      };
+    }
+    if (idx === 1) {
+      return {
+        ...u,
+        predicted_1day_growth_pct: undefined, // force compute path
+        model_factors_43: mkFactors(0.0),
+      };
+    }
+    return u;
+  });
+
+  const sorted = [...universe]
+    .map((u) => {
+      // This local sort is only to determine the tickers needed for prices; runStockCheck does the real compute/sort.
+      // Ensure these entries won't crash if the engine computes them.
+      return u;
+    })
+    .sort((a, b) => (b.predicted_1day_growth_pct ?? 0) - (a.predicted_1day_growth_pct ?? 0));
+  const top10 = sorted.slice(0, 10).map((r) => r.ticker.toUpperCase());
+  const tickers = top10.includes("INTC") ? top10 : [...top10, "INTC"];
+
+  const { output } = runStockCheck({
+    currentDate: "2026-02-14",
+    predictionDate: "2026-02-15",
+    universe,
+    eodPrices: pricesForTickers(tickers),
+  });
+
+  // Ensure computed values exist and are numeric for the first two tickers.
+  const r0 = output.results.find((r) => r.ticker === universe[0].ticker.toUpperCase());
+  const r1 = output.results.find((r) => r.ticker === universe[1].ticker.toUpperCase());
+  expect(typeof r0.predicted_1day_growth_pct).toBe("number");
+  expect(typeof r1.predicted_1day_growth_pct).toBe("number");
 });
 
 test("C. Trade Header Test: TRADE when avg>=0.50 and dispersion>=0.60, else NO TRADE; sector_warning when >=7 same sector", () => {

@@ -1,3 +1,5 @@
+import { computePredicted1DayGrowthPctFromFactors } from "./stockCheckModel43";
+
 const MODEL_VERSION = "Stock Check v1.0";
 
 // Locked canonical column order (must never change)
@@ -124,6 +126,23 @@ function canonicalDisplaySort(rows) {
 }
 
 /**
+ * If predicted_1day_growth_pct is missing but model_factors_43 is present, compute it deterministically.
+ * Forward-honest: if both are missing -> throw.
+ */
+function ensurePredictedGrowthPct(u) {
+  if (isFiniteNumber(u?.predicted_1day_growth_pct)) return u;
+
+  if (u && typeof u === "object" && u.model_factors_43 && typeof u.model_factors_43 === "object") {
+    const computed = computePredicted1DayGrowthPctFromFactors(u.model_factors_43);
+    return { ...u, predicted_1day_growth_pct: computed.predicted_1day_growth_pct };
+  }
+
+  throw new Error(
+    `Missing predicted_1day_growth_pct for ${u?.ticker || "(unknown ticker)"}. Forward-honest: provide predicted_1day_growth_pct or model_factors_43.`
+  );
+}
+
+/**
  * PUBLIC_INTERFACE
  * Executes the Stock Check v1.0 locked-spec flow.
  *
@@ -131,6 +150,10 @@ function canonicalDisplaySort(rows) {
  * - currentDate (YYYY-MM-DD)
  * - predictionDate (YYYY-MM-DD)
  * - universe: full tradable ticker universe with required fields for ranking.
+ *   Each entry must include:
+ *     - ticker, company_name, sector, 3_month, 6_month, 12_month, and either:
+ *         a) predicted_1day_growth_pct (number), OR
+ *         b) model_factors_43 (object with f01..f43 factor inputs)
  * - eodPrices: user-supplied mapping { TICKER: price }. No fetching/hallucination permitted.
  * - macroOverrideNoTrade: optional manual override flag; if true => trade_header forced to "NO TRADE" (post-model).
  *
@@ -159,23 +182,20 @@ export function runStockCheck({
   }
 
   // Ranking engine (immutable): sort full universe by predicted growth desc and take top 10.
-  // We do NOT compute the factor model here; we assume backend/inputs provide predicted_1day_growth_pct (locked weights).
-  for (const u of universe) {
+  // If predicted_1day_growth_pct isn't present, compute it from the locked 43-factor model inputs.
+  const normalizedUniverse = universe.map((u) => {
     if (typeof u?.ticker !== "string" || !u.ticker) throw new Error("Universe entries must include ticker");
-    if (!isFiniteNumber(u.predicted_1day_growth_pct)) {
-      throw new Error(
-        `Missing predicted_1day_growth_pct for ${u.ticker}. Forward-honest: cannot rank on partial data.`
-      );
-    }
     if (typeof u.company_name !== "string" || !u.company_name) throw new Error(`Missing company_name for ${u.ticker}`);
     if (typeof u.sector !== "string" || !u.sector) throw new Error(`Missing sector for ${u.ticker}`);
     // 3/6/12 month returns required for output table
     if (!isFiniteNumber(u["3_month"])) throw new Error(`Missing 3_month for ${u.ticker}`);
     if (!isFiniteNumber(u["6_month"])) throw new Error(`Missing 6_month for ${u.ticker}`);
     if (!isFiniteNumber(u["12_month"])) throw new Error(`Missing 12_month for ${u.ticker}`);
-  }
 
-  const ranked = stableSortByPredictedGrowthDesc(universe);
+    return ensurePredictedGrowthPct(u);
+  });
+
+  const ranked = stableSortByPredictedGrowthDesc(normalizedUniverse);
   const top10 = ranked.slice(0, 10);
 
   // Append INTC regardless of ranking (if not already present)
