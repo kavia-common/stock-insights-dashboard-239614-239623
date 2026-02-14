@@ -321,6 +321,69 @@ button, input {
   color: var(--text-muted);
 }
 
+/* Stock Check page UI polish helpers */
+.stockCheckInputsGrid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.stockCheckInputsGrid > label:nth-child(1) {
+  grid-column: span 3;
+}
+
+.stockCheckInputsGrid > label:nth-child(2) {
+  grid-column: span 3;
+}
+
+.stockCheckMacroRow {
+  grid-column: span 6;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.stockCheckPricesGrid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tableWrap {
+  width: 100%;
+  overflow: auto;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+}
+
+.tableWrap .table {
+  border: none;
+  border-radius: 0;
+}
+
+.table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.stockCheckJson {
+  margin: 0;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(17, 24, 39, 0.02);
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.55;
+  max-height: 520px;
+}
+
 @media (max-width: 980px) {
   .shellBody {
     grid-template-columns: 1fr;
@@ -331,5 +394,28 @@ button, input {
     height: auto;
     border-right: none;
     border-bottom: 1px solid var(--border);
+  }
+
+  .stockCheckInputsGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .stockCheckInputsGrid > label:nth-child(1),
+  .stockCheckInputsGrid > label:nth-child(2) {
+    grid-column: auto;
+  }
+
+  .stockCheckMacroRow {
+    grid-column: auto;
+  }
+
+  .stockCheckPricesGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .stockCheckPricesGrid {
+    grid-template-columns: 1fr;
   }
 }
