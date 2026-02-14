@@ -46,8 +46,13 @@ async function tryRemote(path, fallback) {
   try {
     return await fetchJson(url);
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn("[apiClient] Using fallback data. Remote call failed:", err?.message || err);
+    // Avoid noisy ECONNREFUSED / jsdom network logs during Jest runs.
+    // This does not change behavior (still falls back), only logging.
+    const isTestEnv = process.env.NODE_ENV === "test";
+    if (!isTestEnv) {
+      // eslint-disable-next-line no-console
+      console.warn("[apiClient] Using fallback data. Remote call failed:", err?.message || err);
+    }
     return fallback;
   }
 }

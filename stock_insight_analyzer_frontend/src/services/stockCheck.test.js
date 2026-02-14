@@ -18,6 +18,39 @@ function isDesc(arr) {
   return true;
 }
 
+/**
+ * Helper for tests: determine which tickers the engine will require EOD prices for
+ * (Top 10 by predicted growth + INTC appended if not already present).
+ *
+ * This mirrors the engine behavior:
+ * - if predicted_1day_growth_pct is missing, compute it from model_factors_43.
+ */
+function tickersRequiredByEngine(universe) {
+  const normalized = universe.map((u) => {
+    const t = String(u.ticker || "").toUpperCase();
+    const hasDirect = typeof u.predicted_1day_growth_pct === "number" && Number.isFinite(u.predicted_1day_growth_pct);
+
+    if (hasDirect) return { ticker: t, predicted_1day_growth_pct: u.predicted_1day_growth_pct };
+
+    if (u && typeof u === "object" && u.model_factors_43 && typeof u.model_factors_43 === "object") {
+      const { predicted_1day_growth_pct } = computePredicted1DayGrowthPctFromFactors(u.model_factors_43);
+      return { ticker: t, predicted_1day_growth_pct };
+    }
+
+    // In these tests we always provide enough data; fail loudly if not.
+    throw new Error(`Test universe missing predicted growth inputs for ${t || "(unknown)"}`);
+  });
+
+  normalized.sort((a, b) => {
+    const dg = (b.predicted_1day_growth_pct ?? 0) - (a.predicted_1day_growth_pct ?? 0);
+    if (dg !== 0) return dg;
+    return String(a.ticker).localeCompare(String(b.ticker));
+  });
+
+  const top10 = normalized.slice(0, 10).map((r) => r.ticker);
+  return top10.includes("INTC") ? top10 : [...top10, "INTC"];
+}
+
 test("A. Column Order Test: canonical column order is locked", () => {
   expect(CANONICAL_COLUMNS).toEqual([
     "Rank",
@@ -60,9 +93,7 @@ test("A3. Factor compute is forward-honest: missing any factor throws", () => {
 
 test("B. Ranking Integrity Test: results top10 are sorted descending by predicted growth (rank engine)", () => {
   const universe = makeMockUniverse(250);
-  const sorted = [...universe].sort((a, b) => b.predicted_1day_growth_pct - a.predicted_1day_growth_pct);
-  const top10 = sorted.slice(0, 10).map((r) => r.ticker.toUpperCase());
-  const tickers = top10.includes("INTC") ? top10 : [...top10, "INTC"];
+  const tickers = tickersRequiredByEngine(universe);
 
   const { output } = runStockCheck({
     currentDate: "2026-02-14",
@@ -87,12 +118,10 @@ test("B2. Engine computes predicted_1day_growth_pct from model_factors_43 when d
 
   const universe = makeMockUniverse(250).map((u, idx) => {
     if (idx === 0) {
-      const { predicted_1day_growth_pct } = computePredicted1DayGrowthPctFromFactors(mkFactors(1.0));
       return {
         ...u,
         predicted_1day_growth_pct: undefined, // force compute path
         model_factors_43: mkFactors(1.0),
-        // keep other required fields
       };
     }
     if (idx === 1) {
@@ -105,15 +134,7 @@ test("B2. Engine computes predicted_1day_growth_pct from model_factors_43 when d
     return u;
   });
 
-  const sorted = [...universe]
-    .map((u) => {
-      // This local sort is only to determine the tickers needed for prices; runStockCheck does the real compute/sort.
-      // Ensure these entries won't crash if the engine computes them.
-      return u;
-    })
-    .sort((a, b) => (b.predicted_1day_growth_pct ?? 0) - (a.predicted_1day_growth_pct ?? 0));
-  const top10 = sorted.slice(0, 10).map((r) => r.ticker.toUpperCase());
-  const tickers = top10.includes("INTC") ? top10 : [...top10, "INTC"];
+  const tickers = tickersRequiredByEngine(universe);
 
   const { output } = runStockCheck({
     currentDate: "2026-02-14",
@@ -138,9 +159,7 @@ test("C. Trade Header Test: TRADE when avg>=0.50 and dispersion>=0.60, else NO T
     return u;
   });
 
-  const sorted = [...universe].sort((a, b) => b.predicted_1day_growth_pct - a.predicted_1day_growth_pct);
-  const top10 = sorted.slice(0, 10).map((r) => r.ticker.toUpperCase());
-  const tickers = top10.includes("INTC") ? top10 : [...top10, "INTC"];
+  const tickers = tickersRequiredByEngine(universe);
 
   const { output } = runStockCheck({
     currentDate: "2026-02-14",
@@ -154,9 +173,7 @@ test("C. Trade Header Test: TRADE when avg>=0.50 and dispersion>=0.60, else NO T
 
   // Force NO TRADE by failing dispersion (all equal)
   const universe2 = makeMockUniverse(250).map((u, i) => (i < 10 ? { ...u, predicted_1day_growth_pct: 0.6 } : u));
-  const sorted2 = [...universe2].sort((a, b) => b.predicted_1day_growth_pct - a.predicted_1day_growth_pct);
-  const top10b = sorted2.slice(0, 10).map((r) => r.ticker.toUpperCase());
-  const tickers2 = top10b.includes("INTC") ? top10b : [...top10b, "INTC"];
+  const tickers2 = tickersRequiredByEngine(universe2);
 
   const { output: out2 } = runStockCheck({
     currentDate: "2026-02-14",
@@ -178,16 +195,34 @@ test("C. Trade Header Test: TRADE when avg>=0.50 and dispersion>=0.60, else NO T
   expect(out3.trade_header).toBe("NO TRADE");
 });
 
-test("D. INTC Presence Test: INTC is appended even if outside top 10", () => {
-  const universe = makeMockUniverse(250).map((u) =>
-    u.ticker === "INTC" ? { ...u, predicted_1day_growth_pct: -99 } : u
-  );
+test("D. INTC Presence Test: INTC is appended even if outside top 10 (deterministic)", () => {
+  const spec = getModel43Spec();
 
-  const sorted = [...universe].sort((a, b) => b.predicted_1day_growth_pct - a.predicted_1day_growth_pct);
-  const top10 = sorted.slice(0, 10).map((r) => r.ticker.toUpperCase());
-  expect(top10.includes("INTC")).toBe(false);
+  const mkAllHalfFactors = (overrides = {}) => {
+    const inputs = {};
+    for (const f of spec.factors) inputs[f.id] = 0.5;
+    return { ...inputs, ...overrides };
+  };
 
-  const tickers = [...top10, "INTC"];
+  // Make INTC deterministically "bad" by setting all factors to 0 (=> predicted growth near -3.0),
+  // and remove any direct predicted_1day_growth_pct field so the engine must compute from factors.
+  const universe = makeMockUniverse(250).map((u) => {
+    if (u.ticker.toUpperCase() !== "INTC") return u;
+
+    return {
+      ...u,
+      predicted_1day_growth_pct: undefined,
+      model_factors_43: mkAllHalfFactors(
+        Object.fromEntries(spec.factors.map((f) => [f.id, 0.0]))
+      ),
+    };
+  });
+
+  // Sanity check: INTC should not be in the engine's top10 tickers after our forced factors.
+  const tickers = tickersRequiredByEngine(universe);
+  expect(tickers.slice(0, 10)).not.toContain("INTC");
+  expect(tickers).toContain("INTC");
+
   const { output } = runStockCheck({
     currentDate: "2026-02-14",
     predictionDate: "2026-02-15",
@@ -213,9 +248,7 @@ test("E. No Partial Universe Test: fails if universe size below minimum threshol
 
 test("Forward-honest pricing: fails if any output ticker is missing user-supplied EOD price", () => {
   const universe = makeMockUniverse(250);
-  const sorted = [...universe].sort((a, b) => b.predicted_1day_growth_pct - a.predicted_1day_growth_pct);
-  const top10 = sorted.slice(0, 10).map((r) => r.ticker.toUpperCase());
-  const tickers = top10.includes("INTC") ? top10 : [...top10, "INTC"];
+  const tickers = tickersRequiredByEngine(universe);
 
   const eodPrices = pricesForTickers(tickers);
   delete eodPrices[tickers[0]];
