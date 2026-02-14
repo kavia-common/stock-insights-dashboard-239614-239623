@@ -267,20 +267,143 @@ export function runStockCheck({
  */
 export function makeMockUniverse(size = 250) {
   const sectors = ["Tech", "Healthcare", "Industrials", "Financials", "Consumer", "Energy", "Utilities"];
+
+  // A small but recognizable tradable universe seed. We cycle through these for mock-only demos.
+  // INTC must always exist in-universe.
+  const tradableSeed = [
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "GOOGL",
+    "META",
+    "TSLA",
+    "AVGO",
+    "AMD",
+    "INTC",
+    "QCOM",
+    "ADBE",
+    "CRM",
+    "ORCL",
+    "NFLX",
+    "CSCO",
+    "IBM",
+    "UBER",
+    "SHOP",
+    "PYPL",
+    "SNOW",
+    "PLTR",
+    "JPM",
+    "BAC",
+    "WFC",
+    "GS",
+    "V",
+    "MA",
+    "AXP",
+    "XOM",
+    "CVX",
+    "COP",
+    "CAT",
+    "DE",
+    "BA",
+    "GE",
+    "UNH",
+    "JNJ",
+    "PFE",
+    "LLY",
+    "MRK",
+    "COST",
+    "WMT",
+    "HD",
+    "LOW",
+    "NKE",
+    "DIS",
+  ];
+
+  /**
+   * Deterministic pseudo-random generator (LCG) so results are stable across runs and tests.
+   */
+  const mkRng = (seed) => {
+    let state = seed >>> 0;
+    return () => {
+      state = (1664525 * state + 1013904223) >>> 0;
+      return state / 4294967296; // [0,1)
+    };
+  };
+
+  /**
+   * Create representative 43-factor inputs.
+   * We purposely provide model_factors_43 for every ticker so mock-only mode exercises the
+   * full-universe ranking compute path (computePredicted1DayGrowthPctFromFactors).
+   */
+  const mkFactors43 = (ticker, idx) => {
+    // Mix ticker chars into a stable seed.
+    let s = 2166136261;
+    for (let i = 0; i < ticker.length; i++) {
+      s ^= ticker.charCodeAt(i);
+      s = Math.imul(s, 16777619);
+    }
+    s ^= idx * 2654435761;
+    const rnd = mkRng(s >>> 0);
+
+    // Base "quality" centered near 0.5; add gentle dispersion.
+    const base = 0.42 + rnd() * 0.16; // [0.42, 0.58]
+
+    // Ensure INTC is present and not an outlier: slightly under 0.5 to make it often outside top10.
+    const intcBias = ticker.toUpperCase() === "INTC" ? -0.03 : 0;
+
+    const inputs = {};
+    for (let f = 1; f <= 43; f++) {
+      const id = `f${String(f).padStart(2, "0")}`;
+
+      // A smooth factor profile: base + small jitter + mild trend by factor id.
+      const jitter = (rnd() - 0.5) * 0.14; // [-0.07, +0.07]
+      const factorTrend = ((f - 22) / 44) * 0.06; // approx [-0.03, +0.03]
+      let v = base + jitter + factorTrend + intcBias;
+
+      // Clamp to [0,1] since model supports already-normalized inputs.
+      v = Math.max(0, Math.min(1, v));
+
+      // Round for stable snapshots and to avoid tiny float diffs.
+      inputs[id] = Math.round(v * 10000) / 10000;
+    }
+    return inputs;
+  };
+
   const universe = [];
   for (let i = 0; i < size; i++) {
-    const ticker = i === 50 ? "INTC" : `T${String(i).padStart(3, "0")}`;
+    // Use recognizable tickers first; then fill with synthetic tickers.
+    const ticker =
+      i < tradableSeed.length ? tradableSeed[i] : `T${String(i - tradableSeed.length).padStart(4, "0")}`;
+
     const sector = sectors[i % sectors.length];
-    const growth = toPct(2.2 - i * 0.01); // descending (some negative)
+
+    // Keep 3/6/12 month returns deterministic and plausible.
+    // These are not used for ranking but are required in the canonical output schema.
+    const baseRet = 6.5 - i * 0.015; // slow drift downward
     universe.push({
       ticker,
       company_name: ticker === "INTC" ? "Intel" : `Company ${ticker}`,
       sector,
-      predicted_1day_growth_pct: growth,
-      "3_month": toPct(4.5 - i * 0.02),
-      "6_month": toPct(8.2 - i * 0.03),
-      "12_month": toPct(16.4 - i * 0.05),
+      model_factors_43: mkFactors43(ticker, i),
+      "3_month": toPct(baseRet + 1.2),
+      "6_month": toPct(baseRet + 3.4),
+      "12_month": toPct(baseRet + 7.9),
     });
   }
+
+  // Guarantee INTC exists even if caller requests a very small size.
+  if (!universe.some((u) => u.ticker.toUpperCase() === "INTC")) {
+    universe.push({
+      ticker: "INTC",
+      company_name: "Intel",
+      sector: "Tech",
+      model_factors_43: mkFactors43("INTC", size + 999),
+      "3_month": toPct(2.1),
+      "6_month": toPct(4.2),
+      "12_month": toPct(8.8),
+    });
+  }
+
   return universe;
 }

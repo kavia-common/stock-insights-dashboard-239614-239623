@@ -2,7 +2,24 @@
  * Mock/fallback dataset used when the backend is unreachable.
  */
 
-export const MOCK_SYMBOLS = ["AAPL", "MSFT", "NVDA", "AMZN", "TSLA", "GOOGL"];
+export const MOCK_SYMBOLS = [
+  "AAPL",
+  "MSFT",
+  "NVDA",
+  "AMZN",
+  "GOOGL",
+  "META",
+  "TSLA",
+  "AVGO",
+  "AMD",
+  "INTC",
+  "QCOM",
+  "ADBE",
+  "CRM",
+  "ORCL",
+  "NFLX",
+  "CSCO",
+];
 
 export const MOCK_DASHBOARD = {
   market: {
