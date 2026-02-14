@@ -53,6 +53,8 @@ export default function StockCheckPage() {
   const resultsRef = useRef(null);
   const jsonRef = useRef(null);
 
+  const [jsonActionStatus, setJsonActionStatus] = useState("");
+
   const prepareTickers = () => {
     // derive the required output tickers deterministically from the ranked universe (top10 + INTC)
     // we intentionally do not compute headers here; just identify required tickers for EOD price input UX.
@@ -92,6 +94,77 @@ export default function StockCheckPage() {
 
       // UX: bring attention to the error message.
       setTimeout(() => errorRef.current?.focus?.(), 0);
+    }
+  };
+
+  // This must export/copy EXACTLY the existing strict output object (no schema/key ordering changes).
+  // JSON.stringify preserves insertion order for object keys; we intentionally do NOT rebuild/transform `lastOutput`.
+  const strictJsonString = useMemo(() => {
+    if (!lastOutput) return "";
+    return JSON.stringify(lastOutput, null, 2);
+  }, [lastOutput]);
+
+  const clearJsonStatusSoon = () => {
+    window.setTimeout(() => setJsonActionStatus(""), 1800);
+  };
+
+  const makeDownloadFileName = () => {
+    // Keep filename helpful but do not affect content/schema.
+    const safe = (s) => String(s || "").replace(/[^0-9A-Za-z_-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+    const cd = safe(lastOutput?.current_date || currentDate);
+    const pd = safe(lastOutput?.prediction_date || predictionDate);
+    return `stock-check-${cd}-to-${pd}.json`;
+  };
+
+  const onDownloadJson = () => {
+    if (!strictJsonString) return;
+
+    try {
+      const blob = new Blob([strictJsonString], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = makeDownloadFileName();
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      // Cleanup
+      URL.revokeObjectURL(url);
+
+      setJsonActionStatus("Downloaded JSON");
+      clearJsonStatusSoon();
+    } catch (e) {
+      setJsonActionStatus(`Download failed: ${e?.message || String(e)}`);
+      clearJsonStatusSoon();
+    }
+  };
+
+  const onCopyJson = async () => {
+    if (!strictJsonString) return;
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(strictJsonString);
+      } else {
+        // Fallback for older browsers / non-secure contexts.
+        const ta = document.createElement("textarea");
+        ta.value = strictJsonString;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+      }
+
+      setJsonActionStatus("Copied JSON");
+      clearJsonStatusSoon();
+    } catch (e) {
+      setJsonActionStatus(`Copy failed: ${e?.message || String(e)}`);
+      clearJsonStatusSoon();
     }
   };
 
@@ -302,10 +375,51 @@ export default function StockCheckPage() {
 
       <div className="grid">
         <div style={{ gridColumn: "span 12" }}>
-          <Card title="Strict JSON Output" meta="Exact schema required by Stock Check v1.0 (locked).">
+          <Card
+            title="Strict JSON Output"
+            meta="Exact schema required by Stock Check v1.0 (locked)."
+            actions={
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <Button
+                  variant="ghost"
+                  onClick={onCopyJson}
+                  disabled={!lastOutput}
+                  aria-disabled={!lastOutput}
+                  aria-label="Copy strict JSON output to clipboard"
+                >
+                  Copy JSON
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={onDownloadJson}
+                  disabled={!lastOutput}
+                  aria-disabled={!lastOutput}
+                  aria-label="Download strict JSON output as a file"
+                >
+                  Download JSON
+                </Button>
+              </div>
+            }
+          >
             <div ref={jsonRef}>
+              {jsonActionStatus ? (
+                <div
+                  className="small"
+                  aria-live="polite"
+                  style={{
+                    marginBottom: 10,
+                    padding: "8px 10px",
+                    borderRadius: 12,
+                    border: "1px solid var(--border)",
+                    background: "rgba(17, 24, 39, 0.02)",
+                  }}
+                >
+                  {jsonActionStatus}
+                </div>
+              ) : null}
+
               {lastOutput ? (
-                <pre className="mono stockCheckJson">{JSON.stringify(lastOutput, null, 2)}</pre>
+                <pre className="mono stockCheckJson">{strictJsonString}</pre>
               ) : (
                 <div className="small">Run the model to generate the strict JSON output object.</div>
               )}
