@@ -5,6 +5,7 @@ import DashboardPage from "./pages/DashboardPage";
 import DetailsPage from "./pages/DetailsPage";
 import WatchlistPage from "./pages/WatchlistPage";
 import NewsPage from "./pages/NewsPage";
+import StockCheckPage from "./pages/StockCheckPage";
 import SettingsPage from "./pages/SettingsPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import { getNews, getWatchlist } from "./services/apiClient";
@@ -36,6 +37,7 @@ export default function App() {
             <Route path="/stocks/:symbol" element={<DetailsPage />} />
             <Route path="/watchlist" element={<WatchlistPage />} />
             <Route path="/news" element={<NewsPage />} />
+            <Route path="/stock-check" element={<StockCheckPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>

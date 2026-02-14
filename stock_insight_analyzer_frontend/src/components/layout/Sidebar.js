@@ -38,6 +38,10 @@ export function Sidebar({ collapsed, filters, onChangeFilters, counts }) {
           <span>News</span>
           {!collapsed && <Badge>{counts?.news ?? 0}</Badge>}
         </NavLink>
+        <NavLink to="/stock-check" style={linkStyle}>
+          <span>Stock Check</span>
+          {!collapsed && <Badge tone="blue">v1.0</Badge>}
+        </NavLink>
         <NavLink to="/settings" style={linkStyle}>
           <span>Settings</span>
           {!collapsed && <Badge tone="amber">New</Badge>}
